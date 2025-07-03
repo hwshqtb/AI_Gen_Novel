@@ -2,9 +2,6 @@ import os
 import re
 import time
 
-from AIGN_Prompt import *
-
-
 def Retryer(func, max_retries=10):
     def wrapper(*args, **kwargs):
         for _ in range(max_retries):
@@ -112,8 +109,9 @@ class MarkdownAgent:
 
 
 class AIGN:
-    def __init__(self, chatLLM):
+    def __init__(self, chatLLM, picLLM):
         self.chatLLM = chatLLM
+        self.picLLM = picLLM
 
         self.novel_outline = ""
         self.paragraph_list = []
@@ -123,44 +121,58 @@ class AIGN:
         self.writing_memory = ""
         self.no_memory_paragraph = ""
         self.user_idea = ""
-        self.user_requriments = ""
+        self.user_requirements = ""
         self.embellishment_idea = ""
+        self.setting = ""
+        self.pictures = []
 
         self.novel_outline_writer = MarkdownAgent(
             chatLLM=self.chatLLM,
-            sys_prompt=novel_outline_writer_prompt,
+            sys_prompt=open("prompts/outline.md", "r", encoding="utf-8").read(),
             name="NovelOutlineWriter",
             temperature=0.98,
         )
         self.novel_beginning_writer = MarkdownAgent(
             chatLLM=self.chatLLM,
-            sys_prompt=novel_beginning_writer_prompt,
+            sys_prompt=open("prompts/beginning.md", "r", encoding="utf-8").read(),
             name="NovelBeginningWriter",
             temperature=0.80,
         )
         self.novel_writer = MarkdownAgent(
             chatLLM=self.chatLLM,
-            sys_prompt=novel_writer_prompt,
+            sys_prompt=open("prompts/write.md", "r", encoding="utf-8").read(),
             name="NovelWriter",
             temperature=0.81,
         )
         self.novel_embellisher = MarkdownAgent(
             chatLLM=self.chatLLM,
-            sys_prompt=novel_embellisher_prompt,
+            sys_prompt=open("prompts/embellish.md", "r", encoding="utf-8").read(),
             name="NovelEmbellisher",
             temperature=0.92,
         )
         self.memory_maker = MarkdownAgent(
             chatLLM=self.chatLLM,
-            sys_prompt=memory_maker_prompt,
+            sys_prompt=open("prompts/memory.md", "r", encoding="utf-8").read(),
             name="MemoryMaker",
+            temperature=0.66,
+        )
+        self.novel_climax_maker = MarkdownAgent(
+            chatLLM=self.chatLLM,
+            sys_prompt=open("prompts/climax.md", "r", encoding="utf-8").read(),
+            name="ClimaxMaker",
             temperature=0.66,
         )
 
     def updateNovelContent(self):
         self.novel_content = ""
-        for paragraph in self.paragraph_list:
-            self.novel_content += f"{paragraph}\n\n"
+
+        pic_index = 0
+        for i in range(len(self.paragraph_list)):
+            self.novel_content += f"{self.paragraph_list[i]}\n\n"
+            if pic_index < len(self.pictures) and i == self.pictures[pic_index]:
+                self.novel_content += f"![{pic_index}](./{pic_index}.png)\n\n"
+                pic_index = pic_index + 1
+        
         return self.novel_content
 
     def genNovelOutline(self, user_idea=None):
@@ -173,9 +185,9 @@ class AIGN:
         self.novel_outline = resp["大纲"]
         return self.novel_outline
 
-    def genBeginning(self, user_requriments=None, embellishment_idea=None):
-        if user_requriments:
-            self.user_requriments = user_requriments
+    def genBeginning(self, user_requirements=None, embellishment_idea=None):
+        if user_requirements:
+            self.user_requirements = user_requirements
         if embellishment_idea:
             self.embellishment_idea = embellishment_idea
 
@@ -183,17 +195,19 @@ class AIGN:
             inputs={
                 "用户想法": self.user_idea,
                 "小说大纲": self.novel_outline,
-                "用户要求": self.user_requriments,
+                "用户要求": self.user_requirements,
             },
-            output_keys=["开头", "计划", "临时设定"],
+            output_keys=["开头", "设定", "计划", "临时设定"],
         )
         beginning = resp["开头"]
         self.writing_plan = resp["计划"]
+        self.setting = resp["设定"]
         self.temp_setting = resp["临时设定"]
 
         resp = self.novel_embellisher.invoke(
             inputs={
                 "大纲": self.novel_outline,
+                "设定": self.setting,
                 "临时设定": self.temp_setting,
                 "计划": self.writing_plan,
                 "润色要求": self.embellishment_idea,
@@ -204,6 +218,7 @@ class AIGN:
         beginning = resp["润色结果"]
 
         self.paragraph_list.append(beginning)
+        self.genPicture(beginning)
         self.updateNovelContent()
 
         return beginning
@@ -221,6 +236,7 @@ class AIGN:
     def recordNovel(self):
         record_content = ""
         record_content += f"# 大纲\n\n{self.novel_outline}\n\n"
+        record_content += f"# 设定\n\n{self.setting}\n\n"
         record_content += f"# 正文\n\n"
         record_content += self.novel_content
         record_content += f"# 记忆\n\n{self.writing_memory}\n\n"
@@ -242,9 +258,9 @@ class AIGN:
             self.writing_memory = resp["新的记忆"]
             self.no_memory_paragraph = ""
 
-    def genNextParagraph(self, user_requriments=None, embellishment_idea=None):
-        if user_requriments:
-            self.user_requriments = user_requriments
+    def genNextParagraph(self, user_requirements=None, embellishment_idea=None):
+        if user_requirements:
+            self.user_requirements = user_requirements
         if embellishment_idea:
             self.embellishment_idea = embellishment_idea
 
@@ -253,20 +269,23 @@ class AIGN:
                 "用户想法": self.user_idea,
                 "大纲": self.novel_outline,
                 "前文记忆": self.writing_memory,
+                "设定": self.setting,
                 "临时设定": self.temp_setting,
                 "计划": self.writing_plan,
-                "用户要求": self.user_requriments,
+                "用户要求": self.user_requirements,
                 "上文内容": self.getLastParagraph(),
             },
-            output_keys=["段落", "计划", "临时设定"],
+            output_keys=["段落", "设定", "计划", "临时设定"],
         )
         next_paragraph = resp["段落"]
+        next_setting = resp["设定"]
         next_writing_plan = resp["计划"]
         next_temp_setting = resp["临时设定"]
 
         resp = self.novel_embellisher.invoke(
             inputs={
                 "大纲": self.novel_outline,
+                "设定": next_setting,
                 "临时设定": next_temp_setting,
                 "计划": next_writing_plan,
                 "润色要求": embellishment_idea,
@@ -278,13 +297,36 @@ class AIGN:
         next_paragraph = resp["润色结果"]
 
         self.paragraph_list.append(next_paragraph)
+        self.setting = next_setting
         self.writing_plan = next_writing_plan
         self.temp_setting = next_temp_setting
 
         self.no_memory_paragraph += f"\n{next_paragraph}"
 
         self.updateMemory()
+        self.genPicture(next_paragraph)
         self.updateNovelContent()
         self.recordNovel()
 
         return next_paragraph
+
+    def genPicture(self, content):
+        resp2 = self.novel_climax_maker.invoke(
+            inputs={
+                "大纲": self.novel_outline,
+                "设定": self.setting,
+                "临时设定": self.temp_setting,
+                "上文": content,
+            },
+            output_keys=["高潮", "描述"],
+        )
+        climax = resp2["描述"]
+
+        if climax:
+            self.picLLM(climax, len(self.pictures))
+            self.pictures.append(len(self.paragraph_list) - 1)
+            
+        return len(climax)
+
+    def getNovel(self):
+        return self.novel_content

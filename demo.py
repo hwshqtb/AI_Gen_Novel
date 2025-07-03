@@ -1,11 +1,10 @@
 from AIGN import AIGN
-from ideas import idea_list
-from LLM import chatLLM
+from LLM import chatLLM, picLLM
 
-aign = AIGN(chatLLM)
+aign = AIGN(chatLLM, picLLM)
 
-user_idea = idea_list[1]
-user_requriments = "主角独自一人行动。非常重要！主角不要有朋友！！！"
+user_idea = "主角独自一人在异世界冒险，它爆种时会大喊一句：原神，启动！！！"
+user_requriments = ""
 # embellishment_idea="""
 # 请使用文言文创作
 # """
@@ -14,8 +13,13 @@ user_requriments = "主角独自一人行动。非常重要！主角不要有朋
 # - 在正文中添加表情包：😂😅😘💕😍👍
 # """
 
+print("beginning\n")
 aign.genNovelOutline(user_idea)
 aign.genBeginning(user_requriments)
 
-while 1:
+for i in range(1):
+    print("paragraph {}\n".format(i))
     aign.genNextParagraph()
+
+with open("./outputs/book.md", "w", encoding="utf-8") as f:
+    print(aign.getNovel(), file=f)
